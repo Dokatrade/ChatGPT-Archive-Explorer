@@ -1,0 +1,47 @@
+# Byte-compiled / optimized
+__pycache__/
+*.py[cod]
+*.pyo
+*.so
+
+# Virtual environments
+.env
+.venv
+venv/
+ENV/
+env/
+
+# Packaging / build
+build/
+dist/
+.eggs/
+*.egg-info/
+*.egg
+
+# Caches / coverage / tooling
+.pytest_cache/
+.cache/
+.mypy_cache/
+.coverage
+coverage.xml
+htmlcov/
+dmypy.json
+.pyre/
+.pytype/
+
+# Editors / OS
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Project outputs and archives
+/archives*/
+/projects/
+index.db
+index.db-shm
+index.db-wal
+project_overrides.json
+*.zip

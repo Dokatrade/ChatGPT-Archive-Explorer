@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>ChatGPT Archive Explorer</title>
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header>
+      <div class="title">ChatGPT Archive Explorer — локальный просмотрщик</div>
+      <div class="controls">
+        <input id="search" type="text" placeholder="Поиск по тексту" />
+        <select id="source-filter">
+          <option value="">Все аккаунты</option>
+        </select>
+        <select id="project-filter">
+          <option value="">Все проекты</option>
+        </select>
+        <select id="project-actions">
+          <option value="" selected disabled>Действия</option>
+          <option value="rename">Переименовать проект</option>
+          <option value="download-project">Скачать проект</option>
+          <option value="download-all">Скачать все</option>
+        </select>
+        <select id="model-filter">
+          <option value="">Все модели</option>
+          <option value="Chat">Chat</option>
+          <option value="Research">Research</option>
+        </select>
+        <button id="add-archive" class="secondary">Добавить архив</button>
+        <button id="reset-archive" class="danger">Удалить архив</button>
+      </div>
+    </header>
+    <main>
+      <section class="panel">
+        <div class="section-title">Чаты</div>
+        <div id="chats" class="chats"></div>
+      </section>
+      <section class="viewer">
+        <div id="viewer-header">
+          <div class="chat-header">
+            <h2 id="chat-title">Выберите чат</h2>
+            <div class="chat-actions">
+              <button id="move-chat" class="secondary icon-btn" aria-label="Переместить">&#8597;</button>
+              <button id="delete-chat" class="danger icon-btn" aria-label="Удалить">&#128465;</button>
+            </div>
+          </div>
+          <div class="meta" id="chat-meta"></div>
+          <div class="viewer-actions">
+            <button id="copy-json" class="secondary compact">Copy JSON</button>
+            <button id="copy-md" class="secondary compact">Copy Markdown</button>
+            <button id="copy-txt" class="secondary compact">Copy TXT</button>
+            <button id="copy-path" class="secondary compact">Copy PATH</button>
+          </div>
+        </div>
+        <div id="messages" class="messages"></div>
+      </section>
+    </main>
+    <div id="move-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-title">Переместить чат</div>
+        <div class="modal-body">
+          <label for="move-target">Выберите проект:</label>
+          <select id="move-target">
+            <option value="">Выбрать проект</option>
+          </select>
+        </div>
+        <div class="modal-actions">
+          <button id="move-confirm" class="secondary">Переместить</button>
+          <button id="move-cancel" class="secondary">Отмена</button>
+        </div>
+      </div>
+    </div>
+    <div id="import-modal" class="modal hidden">
+      <div class="modal-card">
+        <div class="modal-title">Добавить архив</div>
+        <div class="modal-body">
+          <label for="import-file">Архив (.zip) в папке архива:</label>
+          <select id="import-file"></select>
+          <label for="import-account">ID аккаунта (латиница/цифры):</label>
+          <input id="import-account" type="text" placeholder="default" />
+          <label class="checkbox-row">
+            <input id="import-incremental" type="checkbox" checked />
+            <span>Добавить, не затирать старое (append)</span>
+          </label>
+        </div>
+        <div class="modal-actions">
+          <button id="import-confirm" class="secondary">Импортировать</button>
+          <button id="import-cancel" class="secondary">Отмена</button>
+        </div>
+      </div>
+    </div>
+    <script src="/app.js"></script>
+  </body>
+</html>
