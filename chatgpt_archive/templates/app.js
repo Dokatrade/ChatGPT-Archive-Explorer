@@ -85,6 +85,14 @@ function markdownToHtml(md) {
   let i = 0;
   const isOl = (line) => /^\s*\d+\.\s+/.test(line);
   const isUl = (line) => /^\s*[-*+]\s+/.test(line);
+  const looksLikeTableDivider = (line) =>
+    /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line || "");
+  const parseTableRow = (row) =>
+    row
+      .trim()
+      .replace(/^\||\|$/g, "")
+      .split("|")
+      .map((cell) => cell.trim());
 
   while (i < lines.length) {
     const line = lines[i];
@@ -117,6 +125,39 @@ function markdownToHtml(md) {
         i += 1;
       }
       blocks.push(`<blockquote>${markdownToHtml(quote.join("\n"))}</blockquote>`);
+      continue;
+    }
+
+    if (
+      lines[i + 1] &&
+      line.includes("|") &&
+      looksLikeTableDivider(lines[i + 1])
+    ) {
+      const headerCells = parseTableRow(line);
+      let j = i + 2;
+      const bodyRows = [];
+      while (
+        j < lines.length &&
+        lines[j].includes("|") &&
+        lines[j].trim() !== "" &&
+        !/^\s*```/.test(lines[j])
+      ) {
+        bodyRows.push(parseTableRow(lines[j]));
+        j += 1;
+      }
+      const thead = `<thead><tr>${headerCells
+        .map((c) => `<th>${renderInlineMarkdown(c)}</th>`)
+        .join("")}</tr></thead>`;
+      const tbody = bodyRows
+        .map(
+          (row) =>
+            `<tr>${row.map((c) => `<td>${renderInlineMarkdown(c)}</td>`).join("")}</tr>`,
+        )
+        .join("");
+      blocks.push(
+        `<div class="table-wrap"><table>${thead}${tbody ? `<tbody>${tbody}</tbody>` : ""}</table></div>`,
+      );
+      i = j;
       continue;
     }
 
@@ -163,7 +204,8 @@ function markdownToHtml(md) {
       !isUl(lines[i]) &&
       !/^\s*#{1,6}\s+/.test(lines[i]) &&
       !/^\s*```/.test(lines[i]) &&
-      !/^\s*>/.test(lines[i])
+      !/^\s*>/.test(lines[i]) &&
+      !(lines[i + 1] && lines[i].includes("|") && looksLikeTableDivider(lines[i + 1]))
     ) {
       paragraph.push(lines[i]);
       i += 1;
@@ -318,6 +360,28 @@ function buildHtmlDocument(payload) {
       padding-left: 14px;
       border-left: 3px solid rgba(255, 255, 255, 0.18);
       color: #cbd5e1;
+    }
+    .table-wrap { overflow-x: auto; margin: 12px 0; }
+    .msg-body table {
+      width: 100%;
+      min-width: 420px;
+      border-collapse: collapse;
+      background: #0b1221;
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      font-size: 14px;
+    }
+    .msg-body th, .msg-body td {
+      border: 1px solid rgba(255, 255, 255, 0.12);
+      padding: 10px 12px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .msg-body thead {
+      background: rgba(255, 255, 255, 0.06);
+      font-weight: 700;
+    }
+    .msg-body tbody tr:nth-child(even) {
+      background: rgba(255, 255, 255, 0.03);
     }
     .msg-body code {
       background: #0b1221;

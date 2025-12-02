@@ -338,6 +338,32 @@ main {
   border-left: 3px solid rgba(255, 255, 255, 0.18);
   color: #cbd5e1;
 }
+.table-wrap {
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.message .body table {
+  width: 100%;
+  min-width: 420px;
+  border-collapse: collapse;
+  background: #0b1221;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  font-size: 14px;
+}
+.message .body th,
+.message .body td {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  padding: 9px 12px;
+  text-align: left;
+  vertical-align: top;
+}
+.message .body thead {
+  background: rgba(255, 255, 255, 0.06);
+  font-weight: 700;
+}
+.message .body tbody tr:nth-child(even) {
+  background: rgba(255, 255, 255, 0.03);
+}
 
 .message .body code {
   background: #0b1221;
