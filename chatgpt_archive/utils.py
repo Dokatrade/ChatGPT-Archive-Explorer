@@ -99,7 +99,7 @@ def split_conversation_uid(uid: str) -> Tuple[str, str]:
 
 
 def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
-    """Read user-defined overrides (names, moves) from project_overrides.json."""
+    """Read user-defined overrides (names, moves, project_moves) from project_overrides.json."""
     primary = root.parent / "project_overrides.json"
     fallback = root / "project_overrides.json"
     path = primary if primary.exists() else fallback
@@ -115,7 +115,7 @@ def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
         data = parse(fallback)
         try:
             ensure_dir(primary.parent)
-            write_json(primary, data if isinstance(data, dict) else {"names": {}, "moves": {}})
+            write_json(primary, data if isinstance(data, dict) else {"names": {}, "moves": {}, "project_moves": {}})
             fallback.unlink()
         except Exception:
             pass
@@ -127,15 +127,16 @@ def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
         raw = {}
         try:
             ensure_dir(primary.parent)
-            write_json(primary, {"names": {}, "moves": {}})
+            write_json(primary, {"names": {}, "moves": {}, "project_moves": {}})
         except Exception:
             pass
 
     names: Dict[str, str] = {}
     moves: Dict[str, str] = {}
+    project_moves: Dict[str, str] = {}
 
-    # Structured format: {"names": {...}, "moves": {...}}
-    if isinstance(raw, dict) and ("names" in raw or "moves" in raw):
+    # Structured format: {"names": {...}, "moves": {...}, "project_moves": {...}}
+    if isinstance(raw, dict) and ("names" in raw or "moves" in raw or "project_moves" in raw):
         for key, value in (raw.get("names") or {}).items():
             if value is None:
                 continue
@@ -148,6 +149,12 @@ def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
             target = str(value).strip()
             if target:
                 moves[str(key)] = target
+        for key, value in (raw.get("project_moves") or {}).items():
+            if value is None:
+                continue
+            target = str(value).strip()
+            if target:
+                project_moves[str(key)] = target
     # Legacy flat dict: treat as names only
     elif isinstance(raw, dict):
         for key, value in raw.items():
@@ -157,12 +164,13 @@ def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
             if name:
                 names[str(key)] = name
 
-    return {"names": names, "moves": moves}
+    return {"names": names, "moves": moves, "project_moves": project_moves}
 
 
 def save_project_overrides(root: Path, overrides: Dict[str, Dict[str, str]]) -> None:
-    """Persist overrides (names, moves) to project_overrides.json."""
+    """Persist overrides (names, moves, project_moves) to project_overrides.json."""
     names = overrides.get("names") or {}
     moves = overrides.get("moves") or {}
+    project_moves = overrides.get("project_moves") or {}
     path = root.parent / "project_overrides.json"
-    write_json(path, {"names": names, "moves": moves})
+    write_json(path, {"names": names, "moves": moves, "project_moves": project_moves})

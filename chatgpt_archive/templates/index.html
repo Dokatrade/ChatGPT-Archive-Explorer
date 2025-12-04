@@ -10,7 +10,10 @@
     <header>
       <div class="title">ChatGPT Archive Explorer — локальный просмотрщик</div>
       <div class="controls">
-        <input id="search" type="text" placeholder="Поиск по тексту" />
+        <div class="search-input">
+          <input id="search" type="text" placeholder="Поиск по тексту" />
+          <button id="search-clear" class="clear-btn hidden" aria-label="Очистить поиск">&#10005;</button>
+        </div>
         <select id="source-filter">
           <option value="">Все аккаунты</option>
         </select>

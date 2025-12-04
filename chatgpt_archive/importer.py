@@ -465,6 +465,7 @@ def import_archive(options: ImportOptions) -> Dict[str, Any]:
         overrides = load_project_overrides(output_root)
         name_overrides = overrides.get("names", {})
         move_overrides = overrides.get("moves", {})
+        project_move_overrides = overrides.get("project_moves", {})
 
         db_path = output_root / "index.db"
         conn = _prepare_database(db_path, rebuild=not options.incremental)
@@ -508,6 +509,12 @@ def import_archive(options: ImportOptions) -> Dict[str, Any]:
                 override_source, override_project = split_project_uid(str(target_project_override))
                 if override_source == source_id:
                     gizmo_id = override_project
+            elif project_move_overrides:
+                project_override = project_move_overrides.get(make_project_uid(source_id, gizmo_id)) or project_move_overrides.get(gizmo_id)
+                if project_override:
+                    override_source, override_project = split_project_uid(str(project_override))
+                    if override_source == source_id:
+                        gizmo_id = override_project
 
             existing_info = existing_map.get(conv_uid)
             existing_updated = (existing_info or {}).get("updated_at")

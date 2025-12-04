@@ -335,6 +335,29 @@ class ArchiveServer:
             )
         self.conn.commit()
 
+    def _project_conversation_count(self, source_id: str, project_id: str) -> int:
+        try:
+            row = self.conn.execute(
+                "SELECT COUNT(*) FROM conversations WHERE source_id = ? AND project_id = ?",
+                (source_id, project_id),
+            ).fetchone()
+            return int(row[0]) if row else 0
+        except Exception:
+            return 0
+
+    def _remove_project_dir(self, source_id: str, project_id: str) -> None:
+        project_path = (self.root / "projects" / source_id / project_id).resolve()
+        if self.root not in project_path.parents and self.root != project_path:
+            return
+        try:
+            if project_path.exists():
+                shutil.rmtree(project_path, ignore_errors=True)
+            parent = project_path.parent
+            if parent.exists() and parent != self.root and not any(parent.iterdir()):
+                parent.rmdir()
+        except Exception:
+            pass
+
     def _handle_export_txt(self, handler: http.server.SimpleHTTPRequestHandler, query: Dict[str, List[str]]) -> None:
         project_filter = (query.get("project_id") or [""])[0].strip()
         project_name_raw = (query.get("project_name") or [""])[0]
@@ -472,8 +495,9 @@ class ArchiveServer:
         overrides = load_project_overrides(self.root)
         names = overrides.get("names", {})
         moves = overrides.get("moves", {})
+        project_moves = overrides.get("project_moves", {})
         names[project_uid] = human_name
-        overrides = {"names": names, "moves": moves}
+        overrides = {"names": names, "moves": moves, "project_moves": project_moves}
         save_project_overrides(self.root, overrides)
 
         self.conn.execute("UPDATE projects SET human_name = ? WHERE project_uid = ?", (human_name, project_uid))
@@ -518,6 +542,8 @@ class ArchiveServer:
             return self._send_json(handler, {"error": "Conversation not found"}, status=404)
         conv_uid = row["conversation_uid"]
         source_id = row["source_id"]
+        source_project_id = row["project_id"]
+        source_project_uid = make_project_uid(source_id, source_project_id)
         target_source, target_project_id = split_project_uid(target_project_raw)
         if target_source_hint:
             target_source = target_source_hint
@@ -549,8 +575,12 @@ class ArchiveServer:
         overrides = load_project_overrides(self.root)
         names = overrides.get("names", {})
         moves = overrides.get("moves", {})
+        project_moves = overrides.get("project_moves", {})
         moves[conv_uid] = project_uid
-        save_project_overrides(self.root, {"names": names, "moves": moves})
+        if self._project_conversation_count(source_id, source_project_id) == 0:
+            project_moves[source_project_uid] = project_uid
+            self._remove_project_dir(source_id, source_project_id)
+        save_project_overrides(self.root, {"names": names, "moves": moves, "project_moves": project_moves})
 
         json_path = dest_fs / "conversation.json"
         if json_path.exists():
@@ -607,9 +637,10 @@ class ArchiveServer:
         overrides = load_project_overrides(self.root)
         names = overrides.get("names", {})
         moves = overrides.get("moves", {})
+        project_moves = overrides.get("project_moves", {})
         if conv_uid in moves:
             moves.pop(conv_uid, None)
-            save_project_overrides(self.root, {"names": names, "moves": moves})
+            save_project_overrides(self.root, {"names": names, "moves": moves, "project_moves": project_moves})
 
         self._recalculate_projects()
         self._send_json(handler, {"status": "ok"})

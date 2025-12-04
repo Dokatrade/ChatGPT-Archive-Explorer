@@ -36,6 +36,7 @@ const ui = {
   chats: document.getElementById("chats"),
   messages: document.getElementById("messages"),
   search: document.getElementById("search"),
+  clearSearch: document.getElementById("search-clear"),
   sourceFilter: document.getElementById("source-filter"),
   projectFilter: document.getElementById("project-filter"),
   commonProjectFilter: document.getElementById("common-project-filter"),
@@ -1006,11 +1007,29 @@ async function loadConversation(id) {
   renderConversationView(data);
 }
 
+function updateSearchClear() {
+  if (!ui.clearSearch) return;
+  if (ui.search.value.trim()) {
+    ui.clearSearch.classList.remove("hidden");
+  } else {
+    ui.clearSearch.classList.add("hidden");
+  }
+}
+
 function attachHandlers() {
   let searchTimer = null;
   ui.search.addEventListener("input", () => {
     clearTimeout(searchTimer);
+    updateSearchClear();
     searchTimer = setTimeout(loadConversations, 250);
+  });
+  ui.clearSearch.addEventListener("click", () => {
+    if (!ui.search.value) return;
+    ui.search.value = "";
+    updateSearchClear();
+    clearTimeout(searchTimer);
+    loadConversations();
+    ui.search.focus();
   });
   ui.sourceFilter.addEventListener("change", () => {
     renderProjectsOptions();
@@ -1055,6 +1074,7 @@ function attachHandlers() {
   ui.importConfirm.addEventListener("click", runImport);
   ui.importCancel.addEventListener("click", hideImportModal);
   ui.resetArchive.addEventListener("click", resetArchive);
+  updateSearchClear();
 }
 
 async function bootstrap() {
