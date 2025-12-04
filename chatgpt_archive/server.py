@@ -1,13 +1,15 @@
 import http.server
 import json
 import mimetypes
+import re
 import shutil
 import socketserver
 import sqlite3
+import unicodedata
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List
-from urllib.parse import parse_qs, urlparse, unquote
-from datetime import datetime
+from urllib.parse import parse_qs, quote, urlparse, unquote
 
 from .importer import ImportOptions, import_archive, _prepare_database
 from .utils import (
@@ -15,10 +17,42 @@ from .utils import (
     ensure_dir,
     load_project_overrides,
     make_project_uid,
+    normalize_source_id,
     save_project_overrides,
     split_project_uid,
     write_json,
 )
+
+def normalize_project_name(value: str) -> str:
+    raw = (value or "").strip()
+    try:
+        normalized = unicodedata.normalize("NFKC", raw)
+    except Exception:
+        normalized = raw
+    normalized = re.sub(r"\s+", " ", normalized)
+    return normalized.strip().lower()
+
+
+def unique_preserve_order(seq: List[str]) -> List[str]:
+    seen = set()
+    result: List[str] = []
+    for item in seq:
+        if item in seen:
+            continue
+        seen.add(item)
+        result.append(item)
+    return result
+
+
+def build_content_disposition(filename: str) -> str:
+    """Return ASCII-safe Content-Disposition with UTF-8 filename* for non-ASCII names."""
+    base = filename or "export.txt"
+    ascii_name = re.sub(r"[^A-Za-z0-9._-]+", "_", base).strip("_") or "export.txt"
+    try:
+        encoded = quote(base, safe="")
+        return f'attachment; filename="{ascii_name}"; filename*=UTF-8\'\'{encoded}'
+    except Exception:
+        return f'attachment; filename="{ascii_name}"'
 
 
 class ArchiveServer:
@@ -67,7 +101,7 @@ class ArchiveServer:
         body = payload.encode("utf-8")
         handler.send_response(status)
         handler.send_header("Content-Type", "text/plain; charset=utf-8")
-        handler.send_header("Content-Disposition", f'attachment; filename="{filename}"')
+        handler.send_header("Content-Disposition", build_content_disposition(filename))
         handler.send_header("Content-Length", str(len(body)))
         handler.end_headers()
         handler.wfile.write(body)
@@ -106,6 +140,27 @@ class ArchiveServer:
             payload.append(item)
         self._send_json(handler, payload)
 
+    def _find_project_uids_by_name(self, raw_name: str) -> List[str]:
+        """Find all project_uids that correspond to a human_name (overrides + DB), normalized like the UI does."""
+        normalized = normalize_project_name(raw_name)
+        if not normalized:
+            return []
+        rows = self.conn.execute("SELECT project_uid, project_id, human_name FROM projects").fetchall()
+        # 1) match by stored human_name
+        matches = [r["project_uid"] for r in rows if normalize_project_name(r["human_name"]) == normalized]
+        # 2) also respect overrides that might differ from the DB (defensive)
+        overrides = load_project_overrides(self.root)
+        name_overrides = overrides.get("names", {})
+        for key, name in name_overrides.items():
+            if normalize_project_name(name) != normalized:
+                continue
+            if ":" in key:
+                matches.append(key)
+            else:
+                # key is project_id without source; map to all matching rows
+                matches.extend([r["project_uid"] for r in rows if r["project_id"] == key])
+        return unique_preserve_order(matches)
+
     def _handle_models(self, handler: http.server.SimpleHTTPRequestHandler) -> None:
         rows = self.conn.execute("SELECT DISTINCT model FROM conversations WHERE model IS NOT NULL").fetchall()
         models = [r["model"] for r in rows if r["model"]]
@@ -114,9 +169,11 @@ class ArchiveServer:
     def _handle_conversations(self, handler: http.server.SimpleHTTPRequestHandler, query: Dict[str, List[str]]) -> None:
         clauses = []
         params: List[Any] = []
-        join_fragment = ""
+        join_fragments: List[str] = []
         q = (query.get("q") or [""])[0].strip()
         project_id = (query.get("project_id") or [""])[0].strip()
+        project_name_raw = (query.get("project_name") or [""])[0]
+        project_name = project_name_raw.strip()
         source_id = (query.get("source_id") or [""])[0].strip()
         role = (query.get("role") or [""])[0].strip()
         model = (query.get("model") or [""])[0].strip()
@@ -125,7 +182,12 @@ class ArchiveServer:
 
         use_fts = bool(q or role)
         if use_fts:
-            join_fragment = "JOIN messages_fts f ON c.conversation_uid = f.conversation_uid"
+            join_fragments.append("JOIN messages_fts f ON c.conversation_uid = f.conversation_uid")
+        project_uids_for_name: List[str] = []
+        if project_name:
+            project_uids_for_name = self._find_project_uids_by_name(project_name_raw)
+            if not project_uids_for_name:
+                return self._send_json(handler, [])
         if project_id:
             if ":" in project_id:
                 clauses.append("c.project_uid = ?")
@@ -133,6 +195,10 @@ class ArchiveServer:
             else:
                 clauses.append("c.project_id = ?")
                 params.append(project_id)
+        if project_uids_for_name:
+            placeholders = ",".join("?" for _ in project_uids_for_name)
+            clauses.append(f"c.project_uid IN ({placeholders})")
+            params.extend(project_uids_for_name)
         if source_id:
             clauses.append("c.source_id = ?")
             params.append(source_id)
@@ -158,11 +224,12 @@ class ArchiveServer:
             params.append(q)
 
         where_sql = " WHERE " + " AND ".join(clauses) if clauses else ""
+        join_sql = " ".join(join_fragments)
         sql = (
             "SELECT DISTINCT c.conversation_uid as conversation_id, c.conversation_id as original_id, c.source_id, c.project_uid, c.project_id, "
             "c.title, c.created_at, c.updated_at, c.snippet, c.folder, c.model "
             "FROM conversations c "
-            f"{join_fragment} "
+            f"{join_sql} "
             f"{where_sql} "
             "ORDER BY c.updated_at DESC LIMIT 400"
         )
@@ -270,19 +337,32 @@ class ArchiveServer:
 
     def _handle_export_txt(self, handler: http.server.SimpleHTTPRequestHandler, query: Dict[str, List[str]]) -> None:
         project_filter = (query.get("project_id") or [""])[0].strip()
+        project_name_raw = (query.get("project_name") or [""])[0]
+        project_name = project_name_raw.strip()
         source_filter = (query.get("source_id") or [""])[0].strip()
         clauses = []
         params: List[Any] = []
+        join_fragments: List[str] = []
         if project_filter:
             if ":" in project_filter:
                 clauses.append("c.project_uid = ?")
             else:
                 clauses.append("c.project_id = ?")
             params.append(project_filter)
+        project_uids_for_name: List[str] = []
+        if project_name:
+            project_uids_for_name = self._find_project_uids_by_name(project_name_raw)
+            if not project_uids_for_name:
+                return self._send_json(handler, {"error": "No data to export"}, status=404)
+        if project_uids_for_name:
+            placeholders = ",".join("?" for _ in project_uids_for_name)
+            clauses.append(f"c.project_uid IN ({placeholders})")
+            params.extend(project_uids_for_name)
         if source_filter:
             clauses.append("c.source_id = ?")
             params.append(source_filter)
         where_sql = "WHERE " + " AND ".join(clauses) if clauses else ""
+        join_sql = " ".join(join_fragments)
 
         projects_map = {
             row["project_uid"]: row["human_name"]
@@ -296,6 +376,7 @@ class ArchiveServer:
             "m.role, m.content, m.created_at AS message_created "
             "FROM conversations c "
             "JOIN messages m ON c.conversation_uid = m.conversation_uid "
+            f"{join_sql} "
             f"{where_sql} "
             "ORDER BY c.source_id, c.project_uid, c.updated_at, c.conversation_uid, m.created_at",
             params,
@@ -355,6 +436,8 @@ class ArchiveServer:
 
         if project_filter:
             filename = f"project-{project_filter}.txt"
+        elif project_name:
+            filename = f"project-{project_name}.txt"
         elif source_filter:
             filename = f"account-{source_filter}.txt"
         else:
@@ -589,17 +672,48 @@ class ArchiveServer:
 
         self._send_json(handler, {"status": "ok", "archive": archive, "result": result})
 
-    def _handle_reset(self, handler: http.server.SimpleHTTPRequestHandler) -> None:
+    def _handle_reset(self, handler: http.server.SimpleHTTPRequestHandler, body: bytes = b"") -> None:
+        try:
+            payload = json.loads(body.decode("utf-8") or "{}") if body else {}
+        except json.JSONDecodeError:
+            return self._send_json(handler, {"error": "Invalid JSON"}, status=400)
+
+        source_raw = str(payload.get("source_id") or payload.get("account") or "").strip()
+        source_id = normalize_source_id(source_raw) if source_raw else ""
+
+        if source_id:
+            # Удаляем данные конкретного аккаунта, оставляя остальные нетронутыми
+            projects_root = self.root / "projects"
+            target_dir = projects_root / source_id
+            try:
+                if target_dir.exists():
+                    shutil.rmtree(target_dir, ignore_errors=True)
+            except Exception:
+                pass
+
+            self.conn.execute("DELETE FROM messages WHERE source_id = ?", (source_id,))
+            self.conn.execute("DELETE FROM messages_fts WHERE source_id = ?", (source_id,))
+            self.conn.execute("DELETE FROM conversations WHERE source_id = ?", (source_id,))
+            self.conn.execute("DELETE FROM projects WHERE source_id = ?", (source_id,))
+            self.conn.execute("DELETE FROM imports WHERE source_id = ?", (source_id,))
+            self.conn.commit()
+
+            self._recalculate_projects()
+
+            try:
+                if projects_root.exists() and not any(projects_root.iterdir()):
+                    shutil.rmtree(projects_root, ignore_errors=True)
+            except Exception:
+                pass
+
+            return self._send_json(handler, {"status": "ok", "source_id": source_id})
+
         # Удаляем сгенерированные артефакты архива, не трогая .zip экспорты
-        overrides_path = self.root.parent / "project_overrides.json"
-        fallback_overrides = self.root / "project_overrides.json"
         targets = [
             self.db_path,
             self.db_path.with_suffix(".db-shm"),
             self.db_path.with_suffix(".db-wal"),
-            overrides_path,
             self.root / "projects",
-            fallback_overrides,
         ]
         for t in targets:
             try:
@@ -667,7 +781,9 @@ class ArchiveServer:
                     body = self.rfile.read(length) if length > 0 else b""
                     return server._handle_import_run(self, body)
                 if parsed.path == "/api/reset":
-                    return server._handle_reset(self)
+                    length = int(self.headers.get("Content-Length") or 0)
+                    body = self.rfile.read(length) if length > 0 else b""
+                    return server._handle_reset(self, body)
                 self.send_response(404)
                 self.end_headers()
 

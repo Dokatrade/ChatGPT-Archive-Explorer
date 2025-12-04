@@ -43,5 +43,4 @@ Thumbs.db
 index.db
 index.db-shm
 index.db-wal
-project_overrides.json
 *.zip

@@ -7,12 +7,38 @@ const state = {
   imports: [],
 };
 
+const NAME_GROUP_PREFIX = "name::";
+const makeNameGroupValue = (name) => `${NAME_GROUP_PREFIX}${encodeURIComponent(name)}`;
+const isNameGroupValue = (value) => typeof value === "string" && value.startsWith(NAME_GROUP_PREFIX);
+const parseNameGroupValue = (value) => decodeURIComponent((value || "").slice(NAME_GROUP_PREFIX.length));
+const safeFilename = (name) => (name || "").replace(/[\\/:*?"<>|]+/g, "_").replace(/\s+/g, "_").trim() || "export";
+const normalizeProjectName = (value) => {
+  const raw = ((value ?? "") + "");
+  const normalized = typeof raw.normalize === "function" ? raw.normalize("NFKC") : raw;
+  return normalized.trim().replace(/\s+/g, " ").toLowerCase();
+};
+const groupProjectsByName = (projects) => {
+  const grouped = projects.reduce((acc, p, idx) => {
+    const displayNameRaw = ((p.human_name ?? p.project_id ?? "") + "").trim();
+    const displayName = displayNameRaw || (p.project_id ?? "Без названия");
+    const normalized = normalizeProjectName(displayName) || normalizeProjectName(p.project_id || "") || `__unnamed_${idx}`;
+    const current = acc.get(normalized) || { name: displayName, projects: [], conversation_count: 0 };
+    current.projects.push(p);
+    current.conversation_count += Number(p.conversation_count) || 0;
+    if (!current.name && displayName) current.name = displayName;
+    acc.set(normalized, current);
+    return acc;
+  }, new Map());
+  return Array.from(grouped.values()).sort((a, b) => (a.name || "").localeCompare(b.name || "", "ru"));
+};
+
 const ui = {
   chats: document.getElementById("chats"),
   messages: document.getElementById("messages"),
   search: document.getElementById("search"),
   sourceFilter: document.getElementById("source-filter"),
   projectFilter: document.getElementById("project-filter"),
+  commonProjectFilter: document.getElementById("common-project-filter"),
   projectActions: document.getElementById("project-actions"),
   modelFilter: document.getElementById("model-filter"),
   chatTitle: document.getElementById("chat-title"),
@@ -466,23 +492,70 @@ function renderSourceOptions(selectedId) {
 
 function renderProjectsOptions(selectedId) {
   const keepSelection = selectedId ?? ui.projectFilter.value;
-  const sourceFilter = ui.sourceFilter.value;
+  const sourceFilter = (ui.sourceFilter.value || "").trim();
   ui.projectFilter.innerHTML = '<option value="">Все проекты</option>';
   const projects = sourceFilter
     ? state.projects.filter((p) => (p.source_id || "default") === sourceFilter)
     : state.projects;
-  projects.forEach((p) => {
-    const opt = document.createElement("option");
-    opt.value = getProjectUid(p);
-    const label = `${p.human_name || p.project_id} · ${p.source_id || "default"} (${p.conversation_count})`;
-    opt.textContent = label;
-    ui.projectFilter.appendChild(opt);
-  });
+  projects
+    .map((p) => ({
+      value: getProjectUid(p),
+      label: `${p.human_name || p.project_id || "Без названия"} · ${p.source_id || "default"} (${Number(p.conversation_count) || 0})`,
+    }))
+    .forEach(({ value, label }) => {
+      const opt = document.createElement("option");
+      opt.value = value;
+      opt.textContent = label;
+      ui.projectFilter.appendChild(opt);
+    });
   if (keepSelection) {
     ui.projectFilter.value = keepSelection;
   }
-  if (ui.projectFilter.value && !projects.some((p) => getProjectUid(p) === ui.projectFilter.value)) {
+  const optionValues = Array.from(ui.projectFilter.options).map((opt) => opt.value);
+  if (ui.projectFilter.value && !optionValues.includes(ui.projectFilter.value)) {
     ui.projectFilter.value = "";
+  }
+}
+
+function renderCommonProjectsOptions(selectedId) {
+  const sourceFilter = (ui.sourceFilter.value || "").trim();
+  if (sourceFilter) {
+    ui.commonProjectFilter.classList.add("hidden");
+    ui.commonProjectFilter.value = "";
+    return;
+  }
+  const keepSelection = selectedId ?? ui.commonProjectFilter.value;
+  ui.commonProjectFilter.classList.remove("hidden");
+  ui.commonProjectFilter.innerHTML = '<option value="">Общие проекты</option>';
+
+  const groups = groupProjectsByName(state.projects).filter((group) => {
+    const sourceCount = new Set(group.projects.map((p) => p.source_id || "default")).size;
+    return sourceCount > 1 && group.projects.length > 1;
+  });
+
+  if (!groups.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "Нет общих проектов";
+    opt.disabled = true;
+    ui.commonProjectFilter.appendChild(opt);
+    ui.commonProjectFilter.value = "";
+    return;
+  }
+
+  groups.forEach((group) => {
+    const opt = document.createElement("option");
+    opt.value = makeNameGroupValue(group.name);
+    opt.textContent = `${group.name} · общие (${group.conversation_count})`;
+    ui.commonProjectFilter.appendChild(opt);
+  });
+
+  if (keepSelection) {
+    ui.commonProjectFilter.value = keepSelection;
+  }
+  const optionValues = Array.from(ui.commonProjectFilter.options).map((opt) => opt.value);
+  if (ui.commonProjectFilter.value && !optionValues.includes(ui.commonProjectFilter.value)) {
+    ui.commonProjectFilter.value = "";
   }
 }
 
@@ -559,7 +632,8 @@ function renderConversationView(conversation) {
   if (model) metaFragments.push(escapeHtml(model));
   ui.chatMeta.innerHTML = metaFragments.join(" • ");
   const webPaths = conversation.paths?.web || {};
-  renderMoveTargets(projectId || ui.projectFilter.value || "", sourceId);
+  const selectedProjectId = isNameGroupValue(ui.projectFilter.value) ? "" : ui.projectFilter.value;
+  renderMoveTargets(projectId || selectedProjectId || "", sourceId);
   ui.moveTarget.value = projectId || ui.moveTarget.value;
   ui.copyJson.onclick = async () => {
     const payload = conversation.conversation;
@@ -661,6 +735,7 @@ async function loadProjects() {
   }));
   renderSourceOptions();
   renderProjectsOptions();
+  renderCommonProjectsOptions();
   renderMoveTargets();
 }
 
@@ -674,6 +749,10 @@ async function renameCurrentProject() {
   const projectId = ui.projectFilter.value;
   if (!projectId) {
     alert("Сначала выберите проект в фильтре.");
+    return;
+  }
+  if (isNameGroupValue(projectId)) {
+    alert("Чтобы переименовать, выберите конкретный проект в конкретном аккаунте.");
     return;
   }
   const current = state.projects.find((p) => getProjectUid(p) === projectId);
@@ -788,20 +867,27 @@ async function runImport() {
 }
 
 async function resetArchive() {
-  if (!window.confirm("Удалить все импортированные данные? (.zip файлы останутся)")) return;
+  const sourceId = (ui.sourceFilter.value || "").trim();
+  const scopeLabel = sourceId ? `данные аккаунта "${sourceId}"` : "все импортированные данные";
+  if (!window.confirm(`Удалить ${scopeLabel}? (.zip файлы останутся)`)) return;
   try {
-    const res = await fetch("/api/reset", { method: "POST" });
+    const options = { method: "POST" };
+    if (sourceId) {
+      options.headers = { "Content-Type": "application/json" };
+      options.body = JSON.stringify({ source_id: sourceId });
+    }
+    const res = await fetch("/api/reset", options);
     if (!res.ok) {
       const err = await res.json().catch(() => ({}));
       throw new Error(err.error || "Сброс не удался");
     }
     state.selectedConversation = null;
     ui.messages.innerHTML = "";
-    ui.chatTitle.textContent = "Архив сброшен";
+    ui.chatTitle.textContent = sourceId ? `Аккаунт ${sourceId} очищен` : "Архив сброшен";
     ui.chatMeta.textContent = "";
     await loadProjects();
     await loadConversations();
-    alert("Архив очищен. Теперь можно импортировать заново.");
+    alert(sourceId ? `Данные аккаунта "${sourceId}" удалены.` : "Архив очищен. Теперь можно импортировать заново.");
   } catch (e) {
     console.error("Reset failed", e);
     alert(e.message || "Сброс не удался");
@@ -838,14 +924,26 @@ async function deleteCurrentConversation() {
 }
 
 function downloadTxt(projectId) {
+  const effectiveProject = projectId || ui.commonProjectFilter.value || ui.projectFilter.value;
   const params = new URLSearchParams();
-  if (projectId) params.set("project_id", projectId);
+  if (effectiveProject) {
+    if (isNameGroupValue(effectiveProject)) {
+      params.set("project_name", parseNameGroupValue(effectiveProject));
+    } else {
+      params.set("project_id", effectiveProject);
+    }
+  }
   if (ui.sourceFilter.value) params.set("source_id", ui.sourceFilter.value);
   const url = params.toString() ? `/api/export/txt?${params.toString()}` : "/api/export/txt";
   const a = document.createElement("a");
   a.href = url;
-  if (projectId) {
-    a.download = `project-${projectId}.txt`;
+  if (effectiveProject) {
+    if (isNameGroupValue(effectiveProject)) {
+      const name = safeFilename(parseNameGroupValue(effectiveProject));
+      a.download = `project-${name}.txt`;
+    } else {
+      a.download = `project-${effectiveProject}.txt`;
+    }
   } else if (ui.sourceFilter.value) {
     a.download = `account-${ui.sourceFilter.value}.txt`;
   } else {
@@ -862,10 +960,11 @@ async function handleProjectAction() {
   if (action === "rename") {
     await renameCurrentProject();
   } else if (action === "download-project") {
-    if (!ui.projectFilter.value) {
+    const projectId = ui.projectFilter.value || ui.commonProjectFilter.value;
+    if (!projectId) {
       alert("Сначала выберите проект.");
     } else {
-      downloadTxt(ui.projectFilter.value);
+      downloadTxt(projectId);
     }
   } else if (action === "download-all") {
     downloadTxt();
@@ -883,7 +982,13 @@ async function loadConversations() {
   const params = new URLSearchParams();
   if (ui.search.value.trim()) params.set("q", ui.search.value.trim());
   if (ui.sourceFilter.value) params.set("source_id", ui.sourceFilter.value);
-  if (ui.projectFilter.value) params.set("project_id", ui.projectFilter.value);
+  const commonProject = ui.commonProjectFilter.value;
+  const directProject = ui.projectFilter.value;
+  if (commonProject) {
+    params.set("project_name", parseNameGroupValue(commonProject));
+  } else if (directProject) {
+    params.set("project_id", directProject);
+  }
   if (ui.modelFilter.value) params.set("model", ui.modelFilter.value);
 
   const res = await fetch(`/api/conversations?${params.toString()}`);
@@ -909,12 +1014,20 @@ function attachHandlers() {
   });
   ui.sourceFilter.addEventListener("change", () => {
     renderProjectsOptions();
+    renderCommonProjectsOptions();
     ui.projectFilter.value = "";
+    ui.commonProjectFilter.value = "";
     loadConversations();
   });
-  [ui.projectFilter, ui.modelFilter].forEach((el) => {
-    el.addEventListener("change", loadConversations);
+  ui.projectFilter.addEventListener("change", () => {
+    if (ui.projectFilter.value) ui.commonProjectFilter.value = "";
+    loadConversations();
   });
+  ui.commonProjectFilter.addEventListener("change", () => {
+    if (ui.commonProjectFilter.value) ui.projectFilter.value = "";
+    loadConversations();
+  });
+  ui.modelFilter.addEventListener("change", loadConversations);
   ui.projectActions.addEventListener("change", handleProjectAction);
   ui.moveChat.addEventListener("click", () => {
     if (!state.selectedConversation) {
@@ -927,7 +1040,8 @@ function attachHandlers() {
       state.selectedConversation.conversation?.project_id;
     const convSource =
       state.selectedConversation.source_id || state.selectedConversation.conversation?.source_id || ui.sourceFilter.value;
-    renderMoveTargets(convProj || ui.projectFilter.value || "", convSource || "");
+    const selectedProjectId = isNameGroupValue(ui.projectFilter.value) ? "" : ui.projectFilter.value;
+    renderMoveTargets(convProj || selectedProjectId || "", convSource || "");
     ui.moveTarget.value = convProj || ui.moveTarget.value;
     showMoveModal();
   });
