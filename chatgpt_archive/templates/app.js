@@ -17,6 +17,12 @@ const normalizeProjectName = (value) => {
   const normalized = typeof raw.normalize === "function" ? raw.normalize("NFKC") : raw;
   return normalized.trim().replace(/\s+/g, " ").toLowerCase();
 };
+const slugifyProjectId = (value) =>
+  ((value ?? "") + "")
+    .trim()
+    .replace(/[^a-zA-Z0-9._-]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .toLowerCase();
 const groupProjectsByName = (projects) => {
   const grouped = projects.reduce((acc, p, idx) => {
     const displayNameRaw = ((p.human_name ?? p.project_id ?? "") + "").trim();
@@ -785,6 +791,49 @@ async function renameCurrentProject() {
   await loadConversations();
 }
 
+async function createProject() {
+  const sourceId = ui.sourceFilter.value || state.sources[0] || "default";
+  const nameInput = window.prompt("Название проекта", "");
+  if (nameInput == null) return;
+  const human_name = nameInput.trim();
+  if (!human_name) {
+    alert("Название не может быть пустым.");
+    return;
+  }
+  const suggestedId = slugifyProjectId(human_name) || slugifyProjectId(`project-${Date.now()}`);
+  const idInput = window.prompt("ID проекта (латиница/цифры/._-)", suggestedId);
+  if (idInput == null) return;
+  const project_id = slugifyProjectId(idInput);
+  if (!project_id) {
+    alert("ID не может быть пустым.");
+    return;
+  }
+
+  try {
+    const res = await fetch("/api/project/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ source_id: sourceId, project_id, human_name }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({}));
+      throw new Error(err.error || "Не удалось создать проект.");
+    }
+    const data = await res.json();
+    await loadProjects();
+    const newId = (data && data.project && data.project.project_uid) || `${sourceId}:${project_id}`;
+    ui.sourceFilter.value = sourceId;
+    renderProjectsOptions(newId);
+    renderCommonProjectsOptions();
+    renderMoveTargets(newId, sourceId);
+    ui.projectFilter.value = newId;
+    await loadConversations();
+  } catch (e) {
+    console.error("Create project failed", e);
+    alert(e.message || "Не удалось создать проект.");
+  }
+}
+
 function showMoveModal() {
   ui.moveModal.classList.remove("hidden");
 }
@@ -960,6 +1009,8 @@ async function handleProjectAction() {
   if (!action) return;
   if (action === "rename") {
     await renameCurrentProject();
+  } else if (action === "create") {
+    await createProject();
   } else if (action === "download-project") {
     const projectId = ui.projectFilter.value || ui.commonProjectFilter.value;
     if (!projectId) {

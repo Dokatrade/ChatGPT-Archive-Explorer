@@ -33,6 +33,13 @@ def normalize_project_name(value: str) -> str:
     return normalized.strip().lower()
 
 
+def normalize_project_id(value: str) -> str:
+    raw = (value or "").strip()
+    cleaned = re.sub(r"[^a-zA-Z0-9._-]+", "-", raw)
+    cleaned = cleaned.strip("-_.")
+    return cleaned.lower()
+
+
 def unique_preserve_order(seq: List[str]) -> List[str]:
     seen = set()
     result: List[str] = []
@@ -131,13 +138,45 @@ class ArchiveServer:
         ).fetchall()
         overrides = load_project_overrides(self.root)
         name_overrides = overrides.get("names", {})
+        manual_projects = overrides.get("projects") or []
         payload = []
+        seen = set()
         for r in rows:
             item = dict(r)
             override = name_overrides.get(item["project_uid"]) or name_overrides.get(item["project_id"])
             if override:
                 item["human_name"] = override
+            seen.add(item["project_uid"])
             payload.append(item)
+        for raw in manual_projects:
+            try:
+                raw_str = str(raw).strip()
+            except Exception:
+                continue
+            if not raw_str:
+                continue
+            source_id, project_id = split_project_uid(raw_str)
+            project_uid = make_project_uid(source_id, project_id)
+            if project_uid in seen:
+                continue
+            human_name = name_overrides.get(project_uid) or name_overrides.get(project_id) or (project_id or "Без проекта")
+            meta_payload = {
+                "project_uid": project_uid,
+                "source_id": source_id,
+                "project_id": project_id,
+                "human_name": human_name,
+                "conversation_count": 0,
+                "first_message_time": None,
+                "last_message_time": None,
+            }
+            meta_path = self.root / "projects" / source_id / project_id / "_meta.json"
+            ensure_dir(meta_path.parent)
+            try:
+                write_json(meta_path, meta_payload)
+            except Exception:
+                pass
+            seen.add(project_uid)
+            payload.append(meta_payload)
         self._send_json(handler, payload)
 
     def _find_project_uids_by_name(self, raw_name: str) -> List[str]:
@@ -468,6 +507,60 @@ class ArchiveServer:
         body = "\n\n".join(lines).strip() + "\n"
         self._send_text(handler, body, filename=filename)
 
+    def _handle_project_create(self, handler: http.server.SimpleHTTPRequestHandler, body: bytes) -> None:
+        try:
+            payload = json.loads(body.decode("utf-8") or "{}")
+        except json.JSONDecodeError:
+            return self._send_json(handler, {"error": "Invalid JSON"}, status=400)
+
+        human_name = str(payload.get("human_name") or "").strip()
+        project_id_raw = str(payload.get("project_id") or "").strip()
+        source_raw = str(payload.get("source_id") or payload.get("account") or "").strip() or DEFAULT_SOURCE_ID
+        source_id = normalize_source_id(source_raw)
+        if not human_name:
+            return self._send_json(handler, {"error": "human_name is required"}, status=400)
+        project_id = normalize_project_id(project_id_raw or human_name)
+        if not project_id:
+            return self._send_json(handler, {"error": "project_id is required"}, status=400)
+        project_uid = make_project_uid(source_id, project_id)
+
+        # Check existing projects (DB)
+        exists = (
+            self.conn.execute("SELECT 1 FROM projects WHERE project_uid = ?", (project_uid,)).fetchone()
+            is not None
+        )
+        overrides = load_project_overrides(self.root)
+        manual_projects = overrides.get("projects") or []
+        manual_set = {str(p).strip() for p in manual_projects if str(p).strip()}
+        names = overrides.get("names", {})
+        moves = overrides.get("moves", {})
+        project_moves = overrides.get("project_moves", {})
+        if exists or project_uid in manual_set or project_id in manual_set:
+            return self._send_json(handler, {"error": "Project already exists"}, status=400)
+
+        manual_set.add(project_uid)
+        manual_projects = list(manual_set)
+        names[project_uid] = human_name
+        save_project_overrides(
+            self.root,
+            {"names": names, "moves": moves, "project_moves": project_moves, "projects": manual_projects},
+        )
+
+        meta_payload = {
+            "project_id": project_id,
+            "project_uid": project_uid,
+            "source_id": source_id,
+            "human_name": human_name,
+            "conversation_count": 0,
+            "first_message_time": None,
+            "last_message_time": None,
+        }
+        meta_path = self.root / "projects" / source_id / project_id / "_meta.json"
+        ensure_dir(meta_path.parent)
+        write_json(meta_path, meta_payload)
+
+        self._send_json(handler, {"status": "ok", "project": meta_payload})
+
     def _handle_project_rename(self, handler: http.server.SimpleHTTPRequestHandler, body: bytes) -> None:
         try:
             payload = json.loads(body.decode("utf-8") or "{}")
@@ -496,8 +589,9 @@ class ArchiveServer:
         names = overrides.get("names", {})
         moves = overrides.get("moves", {})
         project_moves = overrides.get("project_moves", {})
+        projects = overrides.get("projects") or []
         names[project_uid] = human_name
-        overrides = {"names": names, "moves": moves, "project_moves": project_moves}
+        overrides = {"names": names, "moves": moves, "project_moves": project_moves, "projects": projects}
         save_project_overrides(self.root, overrides)
 
         self.conn.execute("UPDATE projects SET human_name = ? WHERE project_uid = ?", (human_name, project_uid))
@@ -576,11 +670,14 @@ class ArchiveServer:
         names = overrides.get("names", {})
         moves = overrides.get("moves", {})
         project_moves = overrides.get("project_moves", {})
+        projects = overrides.get("projects") or []
         moves[conv_uid] = project_uid
         if self._project_conversation_count(source_id, source_project_id) == 0:
             project_moves[source_project_uid] = project_uid
             self._remove_project_dir(source_id, source_project_id)
-        save_project_overrides(self.root, {"names": names, "moves": moves, "project_moves": project_moves})
+        save_project_overrides(
+            self.root, {"names": names, "moves": moves, "project_moves": project_moves, "projects": projects}
+        )
 
         json_path = dest_fs / "conversation.json"
         if json_path.exists():
@@ -638,9 +735,10 @@ class ArchiveServer:
         names = overrides.get("names", {})
         moves = overrides.get("moves", {})
         project_moves = overrides.get("project_moves", {})
+        projects = overrides.get("projects") or []
         if conv_uid in moves:
             moves.pop(conv_uid, None)
-            save_project_overrides(self.root, {"names": names, "moves": moves, "project_moves": project_moves})
+            save_project_overrides(self.root, {"names": names, "moves": moves, "project_moves": project_moves, "projects": projects})
 
         self._recalculate_projects()
         self._send_json(handler, {"status": "ok"})
@@ -795,6 +893,10 @@ class ArchiveServer:
 
             def do_POST(self) -> None:  # noqa: N802
                 parsed = urlparse(self.path)
+                if parsed.path == "/api/project/create":
+                    length = int(self.headers.get("Content-Length") or 0)
+                    body = self.rfile.read(length) if length > 0 else b""
+                    return server._handle_project_create(self, body)
                 if parsed.path == "/api/project/rename":
                     length = int(self.headers.get("Content-Length") or 0)
                     body = self.rfile.read(length) if length > 0 else b""

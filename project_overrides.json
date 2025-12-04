@@ -37,7 +37,10 @@
     "saabgenri25-proton.me:g-Uiz5ukAUR": "N8N",
     "cassidyp10410-outlook.com:g-SVatmGSdQ": "N8N",
     "cassidyp10410-outlook.com:g-p-68e434348d9c8191abf20e35d31452cd": "ENGLISH",
-    "saabgenri25-proton.me:g-p-6861af29d3548191b3bd31857c183d3b": "N8N"
+    "saabgenri25-proton.me:g-p-6861af29d3548191b3bd31857c183d3b": "N8N",
+    "huntjordan7146-outlook.com:g-p-68e3f57adbd88191a45839185f899661": "Опционы",
+    "huntjordan7146-outlook.com:g-p-68e38dca727481918e7d49667c2db083": "ENGLISH",
+    "huntjordan7146-outlook.com:ssd": "SSD"
   },
   "moves": {
     "cassidyp10410-outlook.com:68e6bba0-4a80-832d-920d-ccfeed0df796": "cassidyp10410-outlook.com:g-p-68e68988bf3c819183ad53eb638746c6",
@@ -53,6 +56,12 @@
     "cassidyp10410-outlook.com:68e4d2fc-fda4-8333-b539-c612f402c62f": "cassidyp10410-outlook.com:g-p-68e4f7b7ec448191840c604e885dec57",
     "cassidyp10410-outlook.com:68e4d26d-4584-8332-8079-2c72b01532d9": "cassidyp10410-outlook.com:g-p-68e55175e7a881918e210ce13a15a0dd",
     "saabgenri25-proton.me:683ad217-f1c4-8008-b8ad-e6544ad3a829": "saabgenri25-proton.me:g-68dd7556ce208191a453e151d0899d80",
-    "saabgenri25-proton.me:68221e5f-5a48-8008-a747-66143b85b9b3": "saabgenri25-proton.me:g-p-68bad34b5bd0819185ec287677c901ca"
-  }
+    "saabgenri25-proton.me:68221e5f-5a48-8008-a747-66143b85b9b3": "saabgenri25-proton.me:g-p-68bad34b5bd0819185ec287677c901ca",
+    "huntjordan7146-outlook.com:68cefd7e-9b44-8325-9caa-05fd8c599aa3": "huntjordan7146-outlook.com:g-p-68e3f57adbd88191a45839185f899661",
+    "huntjordan7146-outlook.com:68cf034b-4e84-8323-bd65-a0e7ae60f4c9": "huntjordan7146-outlook.com:ssd"
+  },
+  "project_moves": {},
+  "projects": [
+    "huntjordan7146-outlook.com:ssd"
+  ]
 }

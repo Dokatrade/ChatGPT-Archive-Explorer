@@ -4,7 +4,7 @@ import time
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, Optional, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 
 INVALID_CHARS = r'[<>:"/\\\\|?*]'
@@ -98,8 +98,8 @@ def split_conversation_uid(uid: str) -> Tuple[str, str]:
     return DEFAULT_SOURCE_ID, uid
 
 
-def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
-    """Read user-defined overrides (names, moves, project_moves) from project_overrides.json."""
+def load_project_overrides(root: Path) -> Dict[str, Any]:
+    """Read user-defined overrides (names, moves, project_moves, projects) from project_overrides.json."""
     primary = root.parent / "project_overrides.json"
     fallback = root / "project_overrides.json"
     path = primary if primary.exists() else fallback
@@ -115,7 +115,10 @@ def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
         data = parse(fallback)
         try:
             ensure_dir(primary.parent)
-            write_json(primary, data if isinstance(data, dict) else {"names": {}, "moves": {}, "project_moves": {}})
+            write_json(
+                primary,
+                data if isinstance(data, dict) else {"names": {}, "moves": {}, "project_moves": {}, "projects": []},
+            )
             fallback.unlink()
         except Exception:
             pass
@@ -127,16 +130,17 @@ def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
         raw = {}
         try:
             ensure_dir(primary.parent)
-            write_json(primary, {"names": {}, "moves": {}, "project_moves": {}})
+            write_json(primary, {"names": {}, "moves": {}, "project_moves": {}, "projects": []})
         except Exception:
             pass
 
     names: Dict[str, str] = {}
     moves: Dict[str, str] = {}
     project_moves: Dict[str, str] = {}
+    projects: List[str] = []
 
-    # Structured format: {"names": {...}, "moves": {...}, "project_moves": {...}}
-    if isinstance(raw, dict) and ("names" in raw or "moves" in raw or "project_moves" in raw):
+    # Structured format: {"names": {...}, "moves": {...}, "project_moves": {...}, "projects": [...]}
+    if isinstance(raw, dict) and ("names" in raw or "moves" in raw or "project_moves" in raw or "projects" in raw):
         for key, value in (raw.get("names") or {}).items():
             if value is None:
                 continue
@@ -155,6 +159,13 @@ def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
             target = str(value).strip()
             if target:
                 project_moves[str(key)] = target
+        for value in (raw.get("projects") or []):
+            try:
+                item = str(value).strip()
+            except Exception:
+                continue
+            if item:
+                projects.append(item)
     # Legacy flat dict: treat as names only
     elif isinstance(raw, dict):
         for key, value in raw.items():
@@ -164,13 +175,23 @@ def load_project_overrides(root: Path) -> Dict[str, Dict[str, str]]:
             if name:
                 names[str(key)] = name
 
-    return {"names": names, "moves": moves, "project_moves": project_moves}
+    projects = list(dict.fromkeys(projects))
+    return {"names": names, "moves": moves, "project_moves": project_moves, "projects": projects}
 
 
-def save_project_overrides(root: Path, overrides: Dict[str, Dict[str, str]]) -> None:
-    """Persist overrides (names, moves, project_moves) to project_overrides.json."""
+def save_project_overrides(root: Path, overrides: Dict[str, Any]) -> None:
+    """Persist overrides (names, moves, project_moves, projects) to project_overrides.json."""
     names = overrides.get("names") or {}
     moves = overrides.get("moves") or {}
     project_moves = overrides.get("project_moves") or {}
+    projects = overrides.get("projects") or []
+    normalized_projects = []
+    for p in projects:
+        try:
+            val = str(p).strip()
+        except Exception:
+            continue
+        if val:
+            normalized_projects.append(val)
     path = root.parent / "project_overrides.json"
-    write_json(path, {"names": names, "moves": moves, "project_moves": project_moves})
+    write_json(path, {"names": names, "moves": moves, "project_moves": project_moves, "projects": normalized_projects})
